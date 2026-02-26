@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -10,8 +11,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # For installed tool usage, users can point to any external env file:
+    #   ACADEMIC_TOOLS_ENV_FILE=/path/to/.env
+    # Empty value disables env-file loading (env vars still work).
+    _env_file = os.getenv("ACADEMIC_TOOLS_ENV_FILE", ".env").strip()
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_env_file or None,
         env_file_encoding="utf-8",
         extra="ignore",
     )

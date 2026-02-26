@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fro-wang-academic-tools-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "All-in-one MCP server for academic paper processing: OCR, metadata, structure extraction, translation, summary, arXiv, and Zotero."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,3 +47,9 @@ packages = ["src/academic_tools"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "build>=1.4.0",
+    "twine>=6.2.0",
+]

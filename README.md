@@ -47,37 +47,122 @@ This server currently registers 22 MCP tools:
 > - [How to configure MinerU OCR](docs/mineru_config_guide.md)
 > - [How to configure MCP in AI Agents (Cursor, Claude, Copilot, Cline)](docs/mcp_client_config_guide.md)
 
-## Quick Start (uv)
+## Installation Modes
+
+There are two ways to install and use this MCP server. **Developer mode is recommended**, as the installed mode has not been fully tested yet.
+
+### Mode 1: Developer Mode (Recommended)
+
+Clone the repository from GitHub, fill in a local `.env` file, then point your MCP client to the local project directory.
+
+**Step 1**: Clone the repo and set up the environment:
 
 ```powershell
-cd mcps/fro-wang-academic-tools-mcp
+git clone https://github.com/your-org/fro-wang-academic-tools-mcp.git
+cd fro-wang-academic-tools-mcp
 uv python pin 3.13.7
 uv venv --python 3.13.7
 uv sync --extra dev
-```
-
-Create `.env` from template:
-
-```powershell
 Copy-Item .env.example .env
+# Edit .env and fill in your keys
 ```
 
-Then edit `.env` at least for:
+Edit `.env` at least for:
 
 - `LLM_API_KEY`
-- `MINERU_TOKENS_FILE`
+- `MINERU_API_KEY_1`
 - `ZOTERO_LIBRARY_ID` and `ZOTERO_API_KEY` (if using Zotero remote mode)
 
-## Run
+**Step 2**: Configure your MCP client to run the server from the local project path.
 
-```powershell
-uv run fro-wang-academic-tools-mcp
+The key advantage of this mode is that all credentials are stored in a local `.env` file — no need to embed them in the MCP client config.
+
+#### Codex (`~/.codex/config.toml`)
+
+```toml
+[mcp_servers.academic_tools]
+command = "uv"
+args = ["--directory", "/absolute/path/to/mcps/fro-wang-academic-tools-mcp", "run", "fro-wang-academic-tools-mcp"]
+startup_timeout_sec = 30.0
 ```
 
-or
+Environment variables are read from the `.env` file in the project directory, so you do **not** need to set them again in the MCP config.
 
-```powershell
-uv run python -m academic_tools
+#### JSON-based MCP clients (Cursor, Claude Desktop, Cline, etc.)
+
+```json
+{
+  "mcpServers": {
+    "academic_tools": {
+      "command": "uv",
+      "args": ["--directory", "/absolute/path/to/mcps/fro-wang-academic-tools-mcp", "run", "fro-wang-academic-tools-mcp"]
+    }
+  }
+}
+```
+
+#### Claude Code
+
+```bash
+claude mcp add academic-tools -- uv --directory /absolute/path/to/mcps/fro-wang-academic-tools-mcp run fro-wang-academic-tools-mcp
+```
+
+---
+
+### Mode 2: Installed Mode via `uv tool install` (Not Yet Fully Tested)
+
+> **Warning**: This mode has not been fully tested. Use developer mode if you encounter issues.
+
+Install the package directly as a uv tool:
+
+```bash
+uv tool install fro-wang-academic-tools-mcp
+```
+
+In this mode, the package is installed to a managed location and you cannot easily edit its internal `.env`. Instead, **all credentials must be passed via the MCP client's `env` block**.
+
+#### Codex (`~/.codex/config.toml`)
+
+```toml
+[mcp_servers.academic_tools]
+command = "fro-wang-academic-tools-mcp"
+args = []
+startup_timeout_sec = 30.0
+
+[mcp_servers.academic_tools.env]
+LLM_API_KEY = "your_llm_key"
+LLM_BASE_URL = "https://api.deepseek.com"
+LLM_MODEL = "deepseek-chat"
+MINERU_API_KEY_1 = "your_mineru_key"
+ZOTERO_LIBRARY_ID = "your_zotero_library_id"
+ZOTERO_API_KEY = "your_zotero_api_key"
+```
+
+#### JSON-based MCP clients (Cursor, Claude Desktop, Cline, etc.)
+
+```json
+{
+  "mcpServers": {
+    "academic_tools": {
+      "command": "fro-wang-academic-tools-mcp",
+      "args": [],
+      "env": {
+        "LLM_API_KEY": "your_llm_key",
+        "LLM_BASE_URL": "https://api.deepseek.com",
+        "LLM_MODEL": "deepseek-chat",
+        "MINERU_API_KEY_1": "your_mineru_key",
+        "ZOTERO_LIBRARY_ID": "your_zotero_library_id",
+        "ZOTERO_API_KEY": "your_zotero_key"
+      }
+    }
+  }
+}
+```
+
+Optionally, you can also point to an external env file instead of embedding keys inline:
+
+```bash
+ACADEMIC_TOOLS_ENV_FILE=/absolute/path/to/.env
 ```
 
 ## Long-Running Jobs (Recommended for MCP Clients)
@@ -91,6 +176,18 @@ Many MCP clients apply a ~60s timeout per tool call. For full pipeline runs, pre
 This avoids client timeout while OCR/LLM stages continue in the background.
 
 ## Development
+
+Run the server locally for testing:
+
+```powershell
+uv run fro-wang-academic-tools-mcp
+```
+
+or
+
+```powershell
+uv run python -m academic_tools
+```
 
 Run tests and lint:
 

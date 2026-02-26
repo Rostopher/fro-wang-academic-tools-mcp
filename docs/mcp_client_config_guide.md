@@ -134,7 +134,7 @@ claude mcp remove academic-tools
 ## Troubleshooting
 
 - **Command not found**: If the agent complains that `uv` is not found, provide the absolute path to the `uv` executable (e.g., `/usr/local/bin/uv` or `C:\\Users\\Name\\.cargo\\bin\\uv.exe`).
-- **Environment Variables**: The MCP server will read the `.env` file in the project directory. Ensure your `.env` is correctly configured in the `fro-wang-academic-tools-mcp` folder.
+- **Environment Variables**: Prefer passing secrets via MCP config `env` (or system environment variables). `.env` is mainly for local development in the project directory.
 - **Python Path**: Alternatively, instead of using `uv run`, you can directly use the absolute path to the virtual environment's Python executable:
   - Command: `/path/to/.venv/bin/python`
   - Args: `["-m", "academic_tools"]`
