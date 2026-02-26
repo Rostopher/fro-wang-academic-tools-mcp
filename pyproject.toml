@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fro-wang-academic-tools-mcp"
+version = "0.1.0"
+description = "All-in-one MCP server for academic paper processing: OCR, metadata, structure extraction, translation, summary, arXiv, and Zotero."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # MCP framework
+    "mcp[cli]>=1.2.0",
+    # Zotero connection layer
+    "pyzotero>=1.5.0",
+    "markitdown[pdf]>=0.1.0",
+    "requests>=2.31.0",
+    # arXiv
+    "arxiv>=2.1.0",
+    "httpx>=0.24.0",
+    "python-dateutil>=2.9.0",
+    # OCR (MinerU API calls — PyMuPDF for page count)
+    "PyMuPDF>=1.24.0",
+    # LLM calls (metadata extraction, structure, translation, summary)
+    "openai>=1.0.0",
+    # Config & validation
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    # Robust JSON parsing for LLM outputs (handles invalid escapes, trailing commas, etc.)
+    "json-repair>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+fro-wang-academic-tools-mcp = "academic_tools.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/academic_tools"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

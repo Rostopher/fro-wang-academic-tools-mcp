@@ -1,0 +1,17 @@
+﻿# Python / virtualenv
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.spec-workflow/
+
+# Local env
+.env
+
+# Keep papers directory, ignore everything inside it
+papers/*
+!papers/.gitkeep
