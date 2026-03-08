@@ -10,6 +10,7 @@ Core MinerU API flow:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -219,9 +220,9 @@ async def _run(pdf_path: str, output_dir: Optional[str] = None) -> str:
         token = _get_token()
         api_base = settings.MINERU_API_BASE
 
-        batch_id = _upload_pdf(pdf, token, api_base)
-        zip_url = _poll_result(batch_id, token, api_base)
-        result_md = _download_and_extract(zip_url, out)
+        batch_id = await asyncio.to_thread(_upload_pdf, pdf, token, api_base)
+        zip_url = await asyncio.to_thread(_poll_result, batch_id, token, api_base)
+        result_md = await asyncio.to_thread(_download_and_extract, zip_url, out)
 
         return json.dumps({
             "status": "success",
@@ -243,6 +244,15 @@ def register(mcp: FastMCP) -> None:
         """
         OCR a PDF using MinerU API and save the result as full.md.
 
+        ⚠️  WARNING: This tool blocks until OCR completes (can take 5–30 min for
+        large PDFs). Most MCP clients enforce a ~60s tool-call timeout.
+        If this call times out or returns no response, immediately switch to the
+        async job tools instead:
+          1. start_process_paper_job(paper_dir=..., pdf_path=..., steps=["ocr"])
+             → returns {"job_id": "...", "state": "queued"} immediately
+          2. get_process_paper_job(job_id=...)
+             → poll every few seconds until state == "done"
+
         The output directory will contain:
         - full.md   — full Markdown text of the paper
         - images/   — embedded images extracted from the PDF
@@ -254,6 +264,10 @@ def register(mcp: FastMCP) -> None:
                         after the PDF stem).
 
         Returns:
-            JSON with status and path to full.md.
+            On success:       {"status": "success", "full_md": "/path/full.md",
+                               "output_dir": "/path/dir", "page_count": 12}
+            Already OCR'd:    {"status": "already_exists", "full_md": "/path/full.md",
+                               "output_dir": "/path/dir"}
+            On error/timeout: {"status": "error", "error": "..."}
         """
         return await _run(pdf_path, output_dir)
