@@ -19,7 +19,9 @@ from typing import Any, Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from ..config import settings
 from ..models.paper import PaperWorkspace
+from ..models.queue import ProcessingQueue
 from .header_footer import ensure_header_footer_first_pages
 from .metadata import _run as _meta
 from .ocr import _run as _ocr
@@ -38,6 +40,7 @@ TERMINAL_JOB_STATES = {"done", "error", "canceled"}
 JOB_STORE: Dict[str, Dict[str, Any]] = {}
 JOB_TASKS: Dict[str, asyncio.Task] = {}
 JOB_LOOP_ID: Optional[int] = None
+_JOB_SEMAPHORE: Optional[asyncio.Semaphore] = None
 
 STEP_JOKES = {
     "ocr": [
@@ -159,6 +162,36 @@ def _step_joke(step: str) -> str:
     return random.choice(jokes)
 
 
+def _get_job_semaphore() -> asyncio.Semaphore:
+    global _JOB_SEMAPHORE
+    if _JOB_SEMAPHORE is None:
+        _JOB_SEMAPHORE = asyncio.Semaphore(max(int(settings.MAX_CONCURRENT_JOBS), 1))
+    return _JOB_SEMAPHORE
+
+
+async def _sync_queue_status(
+    ws: PaperWorkspace,
+    *,
+    pdf_path: str = "",
+    job_id: Optional[str] = None,
+    finished_at: Optional[str] = None,
+) -> None:
+    queue = ProcessingQueue(ws.dir.parent)
+    paper_status = ws.load_paper_status()
+
+    def updater(payload: dict[str, Any]) -> None:
+        queue.upsert_paper(
+            payload,
+            workspace_dir=ws.dir,
+            paper_status=paper_status,
+            pdf_path=pdf_path,
+            job_id=job_id,
+            finished_at=finished_at,
+        )
+
+    await queue.update_locked(updater)
+
+
 def _validate_pipeline_input(paper_dir: str, pdf_path: str, steps: List[str]) -> Optional[dict]:
     paper_dir_path = Path(paper_dir).expanduser()
     if paper_dir_path.suffix.lower() == ".pdf":
@@ -273,6 +306,9 @@ async def _run_pipeline_impl(
     step_results: dict = {}
     step_details: dict = {}
     current_dir = paper_dir
+    if pdf_path:
+        ws.save_paper_status({"pdf_source": str(Path(pdf_path).expanduser().resolve())})
+    await _sync_queue_status(ws, pdf_path=pdf_path, job_id=job_id)
 
     def emit(step: str, phase: str, message: str) -> None:
         if job_id:
@@ -280,20 +316,13 @@ async def _run_pipeline_impl(
         else:
             _emit_progress(step, phase, message)
 
-    async def run_step(name: str, coro) -> bool:
-        if name not in steps:
-            step_results[name] = "skipped"
-            step_details[name] = {
-                "status": "skipped",
-                "started_at": None,
-                "finished_at": _now_iso(),
-                "message": f"Step `{name}` skipped (not in requested steps).",
-                "joke": _step_joke(name),
-            }
-            emit(name, "skip", f"Step `{name}` skipped.")
-            return True
+    async def mark_stage(stage: str, status: str, **kwargs: Any) -> None:
+        ws.update_stage(stage, status, **kwargs)
+        await _sync_queue_status(ws, pdf_path=pdf_path, job_id=job_id)
 
+    async def run_step(name: str, coro) -> bool:
         started_at = _now_iso()
+        await mark_stage(name, "running", started_at=started_at)
         emit(name, "start", f"Starting `{name}` step.")
         try:
             raw = await coro
@@ -318,9 +347,18 @@ async def _run_pipeline_impl(
                 "joke": joke,
                 "artifact": artifact,
             }
+            await mark_stage(
+                name,
+                status,
+                started_at=started_at,
+                finished_at=step_details[name]["finished_at"],
+                artifact=str(artifact) if artifact else None,
+                error=result.get("error"),
+            )
             emit(name, "end", f"{message} {joke}")
             return status in ("success", "already_exists", "unchanged", "dry_run")
         except asyncio.CancelledError:
+            await mark_stage(name, "error", started_at=started_at, error="Job canceled by user.")
             raise
         except Exception as exc:
             step_results[name] = f"error: {exc}"
@@ -331,12 +369,20 @@ async def _run_pipeline_impl(
                 "message": f"`{name}` crashed with exception: {exc}",
                 "joke": "Even good pipelines trip sometimes.",
             }
+            await mark_stage(
+                name,
+                "error",
+                started_at=started_at,
+                finished_at=step_details[name]["finished_at"],
+                error=str(exc),
+            )
             emit(name, "error", f"`{name}` crashed: {exc}")
             return False
 
     # --- Step 1: OCR ---
     if "ocr" in steps:
         if skip_completed and (ws.dir / "full.md").exists():
+            await mark_stage("ocr", "done", artifact=str(ws.dir / "full.md"))
             step_results["ocr"] = "already_exists"
             step_details["ocr"] = {
                 "status": "already_exists",
@@ -348,6 +394,7 @@ async def _run_pipeline_impl(
             }
             emit("ocr", "skip", "OCR skipped: full.md already exists.")
         elif not pdf_path:
+            await mark_stage("ocr", "skipped")
             step_results["ocr"] = "skipped (no pdf_path)"
             step_details["ocr"] = {
                 "status": "skipped (no pdf_path)",
@@ -368,6 +415,7 @@ async def _run_pipeline_impl(
                     "final_dir": current_dir,
                 }
     else:
+        await mark_stage("ocr", "skipped")
         step_results["ocr"] = "skipped"
         step_details["ocr"] = {
             "status": "skipped",
@@ -380,6 +428,7 @@ async def _run_pipeline_impl(
     # --- Step 2: Metadata ---
     if "metadata" in steps:
         if skip_completed and ws.metadata_path.exists():
+            await mark_stage("metadata", "done", artifact=str(ws.metadata_path))
             step_results["metadata"] = "already_exists"
             step_details["metadata"] = {
                 "status": "already_exists",
@@ -398,6 +447,7 @@ async def _run_pipeline_impl(
                     _, generated_md = ensure_header_footer_first_pages(ws.dir, pages=3)
                     emit("metadata", "end", f"Prepared metadata input markdown: {generated_md}")
                 except Exception as exc:
+                    await mark_stage("metadata", "error", error=str(exc))
                     step_results["metadata"] = f"error: {exc}"
                     step_details["metadata"] = {
                         "status": "error",
@@ -424,6 +474,7 @@ async def _run_pipeline_impl(
                     "final_dir": current_dir,
                 }
     else:
+        await mark_stage("metadata", "skipped")
         step_results["metadata"] = "skipped"
         step_details["metadata"] = {
             "status": "skipped",
@@ -436,6 +487,7 @@ async def _run_pipeline_impl(
     # --- Step 3: Structure ---
     if "structure" in steps:
         if skip_completed and ws.structure_path.exists():
+            await mark_stage("structure", "done", artifact=str(ws.structure_path))
             step_results["structure"] = "already_exists"
             step_details["structure"] = {
                 "status": "already_exists",
@@ -457,6 +509,7 @@ async def _run_pipeline_impl(
                     "final_dir": current_dir,
                 }
     else:
+        await mark_stage("structure", "skipped")
         step_results["structure"] = "skipped"
         step_details["structure"] = {
             "status": "skipped",
@@ -469,6 +522,7 @@ async def _run_pipeline_impl(
     # --- Step 4: Translate ---
     if "translate" in steps:
         if skip_completed and ws.translated_path.exists():
+            await mark_stage("translate", "done", artifact=str(ws.translated_path))
             step_results["translate"] = "already_exists"
             step_details["translate"] = {
                 "status": "already_exists",
@@ -490,6 +544,7 @@ async def _run_pipeline_impl(
                     "final_dir": current_dir,
                 }
     else:
+        await mark_stage("translate", "skipped")
         step_results["translate"] = "skipped"
         step_details["translate"] = {
             "status": "skipped",
@@ -502,6 +557,7 @@ async def _run_pipeline_impl(
     # --- Step 5: Summary ---
     if "summary" in steps:
         if skip_completed and ws.summary_path.exists():
+            await mark_stage("summary", "done", artifact=str(ws.summary_path))
             step_results["summary"] = "already_exists"
             step_details["summary"] = {
                 "status": "already_exists",
@@ -523,6 +579,7 @@ async def _run_pipeline_impl(
                     "final_dir": current_dir,
                 }
     else:
+        await mark_stage("summary", "skipped")
         step_results["summary"] = "skipped"
         step_details["summary"] = {
             "status": "skipped",
@@ -535,6 +592,7 @@ async def _run_pipeline_impl(
     # --- Step 6: Rename ---
     if "rename" in steps:
         rename_started_at = _now_iso()
+        await mark_stage("rename", "running", started_at=rename_started_at)
         emit("rename", "start", "Starting `rename` step.")
         try:
             rename_result_raw = await _rename(current_dir, dry_run=dry_run_rename)
@@ -554,9 +612,18 @@ async def _run_pipeline_impl(
                 "joke": rename_joke,
                 "artifact": rename_artifact,
             }
-            emit("rename", "end", f"{rename_message} {rename_joke}")
             if rename_status == "success":
                 current_dir = rename_result.get("new_path", current_dir)
+                ws = PaperWorkspace(current_dir)
+            await mark_stage(
+                "rename",
+                rename_status,
+                started_at=rename_started_at,
+                finished_at=step_details["rename"]["finished_at"],
+                artifact=str(rename_artifact) if rename_artifact else None,
+                error=rename_result.get("error"),
+            )
+            emit("rename", "end", f"{rename_message} {rename_joke}")
         except Exception as exc:
             step_results["rename"] = f"error: {exc}"
             step_details["rename"] = {
@@ -566,8 +633,16 @@ async def _run_pipeline_impl(
                 "message": f"`rename` crashed with exception: {exc}",
                 "joke": "Even good pipelines trip sometimes.",
             }
+            await mark_stage(
+                "rename",
+                "error",
+                started_at=rename_started_at,
+                finished_at=step_details["rename"]["finished_at"],
+                error=str(exc),
+            )
             emit("rename", "error", f"`rename` crashed: {exc}")
     else:
+        await mark_stage("rename", "skipped")
         step_results["rename"] = "skipped"
         step_details["rename"] = {
             "status": "skipped",
@@ -629,42 +704,53 @@ def _new_job(
 async def _job_runner(job_id: str) -> None:
     job = JOB_STORE[job_id]
     req = job["request"]
-    job["state"] = "running"
-    job["started_at"] = _now_iso()
-    job["last_message"] = "Job started."
-    _job_event(job_id, "system", "start", "Background job started.")
+    sem = _get_job_semaphore()
+    async with sem:
+        job["state"] = "running"
+        job["started_at"] = _now_iso()
+        job["last_message"] = "Job started."
+        _job_event(job_id, "system", "start", "Background job started.")
 
-    try:
-        result = await _run_pipeline_impl(
-            paper_dir=req["paper_dir"],
-            pdf_path=req["pdf_path"],
-            steps=req["steps"],
-            skip_completed=req["skip_completed"],
-            translate_concurrency=req["translate_concurrency"],
-            dry_run_rename=req["dry_run_rename"],
-            job_id=job_id,
-        )
-        job["result"] = result
-        job["result_ref"] = _build_result_ref(result)
-        if result.get("status") in ("complete", "partial_failed"):
-            job["state"] = "done"
-            job["progress"] = 1.0
-            job["last_message"] = f"Job finished with status `{result.get('status')}`."
-        else:
+        try:
+            result = await _run_pipeline_impl(
+                paper_dir=req["paper_dir"],
+                pdf_path=req["pdf_path"],
+                steps=req["steps"],
+                skip_completed=req["skip_completed"],
+                translate_concurrency=req["translate_concurrency"],
+                dry_run_rename=req["dry_run_rename"],
+                job_id=job_id,
+            )
+            job["result"] = result
+            job["result_ref"] = _build_result_ref(result)
+            if result.get("status") in ("complete", "partial_failed"):
+                job["state"] = "done"
+                job["progress"] = 1.0
+                job["last_message"] = f"Job finished with status `{result.get('status')}`."
+            else:
+                job["state"] = "error"
+                job["error"] = result.get("error", "unknown error")
+                job["last_message"] = f"Job failed: {job['error']}"
+        except asyncio.CancelledError:
+            job["state"] = "canceled"
+            job["last_message"] = "Job canceled by user."
+        except Exception as exc:
             job["state"] = "error"
-            job["error"] = result.get("error", "unknown error")
-            job["last_message"] = f"Job failed: {job['error']}"
-    except asyncio.CancelledError:
-        job["state"] = "canceled"
-        job["last_message"] = "Job canceled by user."
-    except Exception as exc:
-        job["state"] = "error"
-        job["error"] = str(exc)
-        job["last_message"] = f"Job crashed: {exc}"
-        _job_event(job_id, "system", "error", job["last_message"])
-    finally:
-        job["finished_at"] = _now_iso()
-        JOB_TASKS.pop(job_id, None)
+            job["error"] = str(exc)
+            job["last_message"] = f"Job crashed: {exc}"
+            _job_event(job_id, "system", "error", job["last_message"])
+        finally:
+            job["finished_at"] = _now_iso()
+            final_dir = None
+            if isinstance(job.get("result"), dict):
+                final_dir = job["result"].get("final_dir")
+            await _sync_queue_status(
+                PaperWorkspace(final_dir or req["paper_dir"]),
+                pdf_path=req["pdf_path"],
+                job_id=job_id,
+                finished_at=job["finished_at"],
+            )
+            JOB_TASKS.pop(job_id, None)
 
 
 def register(mcp: FastMCP) -> None:
@@ -721,6 +807,14 @@ def register(mcp: FastMCP) -> None:
         """Start pipeline in background and return a `job_id` immediately.
 
         Use get_process_paper_job to poll progress, cancel_process_paper_job to abort.
+
+        This is also the recommended fallback when `ocr_paper` times out: call
+        this tool with steps=["ocr"] (and the remaining steps) instead of retrying
+        ocr_paper directly.
+
+        Returns immediately with:
+            {"status": "accepted", "job_id": "...", "state": "queued",
+             "poll_tool": "get_process_paper_job"}
 
         Args:
             paper_dir: **Absolute** path to the paper workspace directory

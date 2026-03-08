@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # Max characters from full.md to send to LLM for metadata extraction
     METADATA_TEXT_LIMIT: int = 6000
 
+    # Max concurrent background paper-processing jobs.
+    MAX_CONCURRENT_JOBS: int = 3
+
 
 # Singleton — import this everywhere
 settings = Settings()
