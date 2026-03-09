@@ -101,7 +101,7 @@ cp .env.example .env
 | `ZOTERO_LIBRARY_TYPE` | `user` | `user` 或 `group` |
 | `ZOTERO_API_KEY` | — | Zotero Web API Key |
 | `ZOTERO_LOCAL` | `false` | 本地模式（Zotero 桌面端必须运行） |
-| `ARXIV_STORAGE_PATH` | `papers` | arXiv 下载目录（相对路径按当前工作目录解析） |
+| `ARXIV_STORAGE_PATH` | `papers` | arXiv 下载目录（建议使用绝对路径；相对路径按当前工作目录解析） |
 | `MINERU_API_BASE` | `https://mineru.net/api/v4` | MinerU API 基地址 |
 | `MINERU_TOKENS_FILE` | — | 一行一个 token 的文本文件路径 |
 | `METADATA_TEXT_LIMIT` | `6000` | 发给 LLM 提取元数据的字符数上限 |

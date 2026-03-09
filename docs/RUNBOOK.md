@@ -21,7 +21,7 @@
   - `ZOTERO_API_KEY` — Zotero Web API Key
   - `ZOTERO_LOCAL` — 本地模式（`true/false`）
   - `MINERU_TOKENS_FILE` — MinerU token 文件路径
-  - `ARXIV_STORAGE_PATH` — arXiv 下载目录（默认 `papers`）
+  - `ARXIV_STORAGE_PATH` — arXiv 下载目录（默认 `papers`，建议填绝对路径）
   - `MAX_CONCURRENT_JOBS` — 后台并行 job 上限（默认 `3`）
 
 ## 2) 运行命令
@@ -51,6 +51,19 @@ papers/                       # 根目录（ARXIV_STORAGE_PATH）
     ├── summary_report.md         # 摘要报告
     ├── paper_status.json         # 论文级处理状态（每 stage 实时写盘）
     └── .academic_workspace       # 安全哨兵标记
+```
+
+## 3.1) `download_paper` 路径规范
+
+- `download_dir` **优先传绝对路径**（跨客户端/跨工作目录最稳定）
+- `download_dir="cwd"` 或 `"auto"` 会固定到 `<cwd>/papers`
+- 不传 `download_dir` 时使用 `ARXIV_STORAGE_PATH`
+- 若传相对路径，会按 MCP 服务进程的当前工作目录解析
+
+示例：
+
+```json
+{"paper_id":"1706.03762","download_dir":"F:/codeF/llm_projects/academic_tools_for_agents/mcps/fro-wang-academic-tools-mcp/papers"}
 ```
 
 ## 4) 常见问题

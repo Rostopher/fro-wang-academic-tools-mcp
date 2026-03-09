@@ -723,10 +723,15 @@ async def _job_runner(job_id: str) -> None:
             )
             job["result"] = result
             job["result_ref"] = _build_result_ref(result)
-            if result.get("status") in ("complete", "partial_failed"):
+            if result.get("status") == "complete":
                 job["state"] = "done"
                 job["progress"] = 1.0
                 job["last_message"] = f"Job finished with status `{result.get('status')}`."
+            elif result.get("status") == "partial_failed":
+                job["state"] = "error"
+                job["error"] = result.get("error", "partial_failed")
+                job["progress"] = 1.0
+                job["last_message"] = f"Job partially failed: {job['error']}"
             else:
                 job["state"] = "error"
                 job["error"] = result.get("error", "unknown error")
@@ -934,4 +939,355 @@ def register(mcp: FastMCP) -> None:
             "job_id": job_id,
             "state": "canceling",
             "message": "Cancel signal sent.",
+        })
+
+    @mcp.tool()
+    async def batch_process_papers(
+        directory: str,
+        steps: List[str] = ALL_STEPS,
+        skip_completed: bool = True,
+        translate_concurrency: int = 4,
+        dry_run_rename: bool = False,
+    ) -> str:
+        """
+        Scan a directory for all papers (PDFs and existing workspaces), then
+        start batch processing jobs with controlled concurrency.
+
+        This tool:
+        1. Scans `directory` for all *.pdf files and existing workspaces
+        2. For each PDF, creates/uses workspace directory (PDF stem + "-work")
+        3. Initializes processing_queue.json with all discovered papers
+        4. Starts background jobs (concurrency controlled by `MAX_CONCURRENT_JOBS`)
+        5. Returns immediately with batch summary
+
+        Use get_batch_status() to monitor progress.
+
+        Args:
+            directory: **Absolute** path to the papers base directory
+                (e.g. ``F:/papers``).
+            steps: List of pipeline steps to run. Default: all steps.
+            skip_completed: Skip steps whose output files already exist.
+            translate_concurrency: Parallel LLM calls for translation.
+            dry_run_rename: Preview rename without writing.
+
+        Returns:
+            JSON with batch summary: {total, started, skipped, queue_file, job_ids}
+        """
+        loop_error = _ensure_job_loop_consistency()
+        if loop_error:
+            return json.dumps(loop_error)
+
+        base_dir = Path(directory).expanduser().resolve()
+        if not base_dir.exists():
+            return json.dumps({
+                "status": "error",
+                "error": f"Directory does not exist: {base_dir}",
+            })
+        if not base_dir.is_dir():
+            return json.dumps({
+                "status": "error",
+                "error": f"Path is not a directory: {base_dir}",
+            })
+
+        # Scan for PDFs and existing workspaces.
+        pdf_files = sorted(base_dir.glob("*.pdf"))
+        workspace_dirs = sorted(
+            (
+                subdir
+                for subdir in base_dir.iterdir()
+                if subdir.is_dir() and PaperWorkspace(subdir).is_workspace()
+            ),
+            key=lambda item: item.name.lower(),
+        )
+        if not pdf_files and not workspace_dirs:
+            return json.dumps({
+                "status": "error",
+                "error": (
+                    "No input papers found. Expected at least one top-level *.pdf "
+                    "or one existing workspace directory."
+                ),
+            })
+
+        # Initialize queue
+        queue = ProcessingQueue(base_dir)
+        queue_payload = queue.load()
+        job_ids: List[str] = []
+        skipped_count = 0
+        discovered_count = 0
+
+        # Build a merged input set keyed by workspace dir.
+        candidates: dict[str, dict[str, Any]] = {}
+        for pdf_path in pdf_files:
+            workspace_dir = base_dir / f"{pdf_path.stem}-work"
+            candidates[str(workspace_dir)] = {
+                "workspace_dir": workspace_dir,
+                "pdf_source": str(pdf_path.resolve()),
+                "source": "pdf",
+            }
+        for workspace_dir in workspace_dirs:
+            key = str(workspace_dir)
+            if key not in candidates:
+                candidates[key] = {
+                    "workspace_dir": workspace_dir,
+                    "pdf_source": None,
+                    "source": "workspace",
+                }
+
+        for item in candidates.values():
+            workspace_dir = item["workspace_dir"]
+            ws = PaperWorkspace(workspace_dir)
+            if not ws.is_workspace():
+                ws.mark_as_workspace()
+
+            existing_status = ws.load_paper_status()
+            discovered_count += 1
+
+            # Prefer explicit pdf source from discovery, fall back to existing status.
+            pdf_source = item["pdf_source"] or existing_status.get("pdf_source")
+            if pdf_source:
+                ws.save_paper_status({"pdf_source": str(Path(pdf_source).expanduser().resolve())})
+            paper_status = ws.load_paper_status()
+
+            # Check if already completed (if skip_completed)
+            if skip_completed and paper_status.get("overall_status", "pending") == "done":
+                queue.upsert_paper(
+                    queue_payload,
+                    workspace_dir=workspace_dir,
+                    paper_status=paper_status,
+                    pdf_path=pdf_source,
+                    job_id=None,
+                    finished_at=_now_iso(),
+                )
+                skipped_count += 1
+                continue
+
+            # Queue the paper.
+            queue.upsert_paper(
+                queue_payload,
+                workspace_dir=workspace_dir,
+                paper_status=paper_status,
+                pdf_path=pdf_source,
+                job_id=None,
+            )
+
+            # Create job.
+            job = _new_job(
+                paper_dir=str(workspace_dir),
+                pdf_path=str(pdf_source or ""),
+                steps=list(steps),
+                skip_completed=skip_completed,
+                translate_concurrency=translate_concurrency,
+                dry_run_rename=dry_run_rename,
+            )
+            job_ids.append(job["job_id"])
+
+        # Save queue with all papers
+        queue.save(queue_payload)
+
+        # Start tasks (respecting the global semaphore configured by MAX_CONCURRENT_JOBS)
+        started_count = 0
+        for job_id in job_ids:
+            task = asyncio.create_task(_job_runner(job_id))
+            JOB_TASKS[job_id] = task
+            started_count += 1
+
+        return json.dumps({
+            "status": "ok",
+            "total": discovered_count,
+            "started": started_count,
+            "skipped": skipped_count,
+            "queue_file": str(queue.path),
+            "job_ids": job_ids,
+            "message": (
+                f"Batch started: discovered {discovered_count}, started {started_count}, "
+                f"skipped {skipped_count}. Monitor with get_batch_status()."
+            ),
+        })
+
+    @mcp.tool()
+    async def get_batch_status(
+        directory: str,
+    ) -> str:
+        """
+        Read the processing_queue.json file in the specified directory
+        and return a batch processing status summary.
+
+        If the queue file doesn't exist, scans all subdirectories for
+        paper_status.json files and builds a summary.
+
+        Args:
+            directory: **Absolute** path to the papers base directory.
+
+        Returns:
+            JSON with batch status: {total, done, running, pending, error, papers}
+        """
+        base_dir = Path(directory).expanduser().resolve()
+        if not base_dir.exists():
+            return json.dumps({
+                "status": "error",
+                "error": f"Directory does not exist: {base_dir}",
+            })
+
+        queue = ProcessingQueue(base_dir)
+        if not queue.path.exists():
+            # Fallback: scan subdirectories
+            workspaces: List[Dict[str, Any]] = []
+            for subdir in base_dir.iterdir():
+                if subdir.is_dir():
+                    ws = PaperWorkspace(subdir)
+                    if ws.is_workspace():
+                        paper_status = ws.load_paper_status()
+                        workspaces.append({
+                            "workspace_dir": str(subdir),
+                            "status": paper_status.get("overall_status", "pending"),
+                            "stages": paper_status.get("stages", {}),
+                        })
+
+            summary = {"total": len(workspaces), "done": 0, "running": 0, "pending": 0, "error": 0}
+            for w in workspaces:
+                status = w.get("status", "pending")
+                if status in summary:
+                    summary[status] += 1
+
+            return json.dumps({
+                "status": "ok",
+                "summary": summary,
+                "papers": workspaces,
+                "source": "scanned",
+            })
+
+        payload = queue.load()
+        return json.dumps({
+            "status": "ok",
+            "summary": payload.get("summary", {}),
+            "papers": payload.get("papers", []),
+            "queue_file": str(queue.path),
+            "updated_at": payload.get("updated_at"),
+            "source": "queue_file",
+        })
+
+    @mcp.tool()
+    async def list_jobs(
+        state: str = "",
+        limit: int = 50,
+    ) -> str:
+        """
+        List all background jobs in memory with optional filtering.
+
+        Args:
+            state: Filter by job state. Options: "", "queued", "running",
+                "done", "error", "canceled". Empty string returns all.
+            limit: Maximum number of jobs to return. Default: 50.
+
+        Returns:
+            JSON with list of job summaries.
+        """
+        _prune_jobs()
+
+        valid_states = {"", "queued", "running", "done", "error", "canceled"}
+        if state not in valid_states:
+            return json.dumps({
+                "status": "error",
+                "error": f"Invalid state: {state}. Valid: {valid_states}",
+            })
+
+        jobs = []
+        for job_id, job in JOB_STORE.items():
+            job_state = job.get("state", "")
+            if state and job_state != state:
+                continue
+            jobs.append({
+                "job_id": job_id,
+                "state": job_state,
+                "progress": job.get("progress", 0.0),
+                "current_step": job.get("current_step"),
+                "message": job.get("last_message"),
+                "created_at": job.get("created_at"),
+                "started_at": job.get("started_at"),
+                "finished_at": job.get("finished_at"),
+                "paper_dir": job.get("request", {}).get("paper_dir"),
+                "error": job.get("error"),
+            })
+
+        # Sort by created_at descending
+        jobs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        jobs = jobs[:limit]
+
+        return json.dumps({
+            "status": "ok",
+            "count": len(jobs),
+            "jobs": jobs,
+        })
+
+    @mcp.tool()
+    async def retry_job(
+        job_id: str,
+    ) -> str:
+        """
+        Retry a failed job (`error`) or a canceled job (`canceled`)
+        with the same parameters.
+
+        Automatically skips completed stages by checking file existence
+        and paper_status.json.
+
+        Args:
+            job_id: The job_id of the job to retry.
+
+        Returns:
+            JSON with new job_id and status when retry is accepted.
+            Returns error for all other states (e.g. `queued`/`running`/`done`).
+        """
+        loop_error = _ensure_job_loop_consistency()
+        if loop_error:
+            return json.dumps(loop_error)
+
+        _prune_jobs()
+        old_job = JOB_STORE.get(job_id)
+        if not old_job:
+            return json.dumps({
+                "status": "error",
+                "error": f"Job not found: {job_id}",
+            })
+
+        # Only retry failed/canceled jobs.
+        old_state = old_job.get("state", "")
+        if old_state not in {"error", "canceled"}:
+            return json.dumps({
+                "status": "error",
+                "error": f"Cannot retry job in state '{old_state}'. Only failed/canceled jobs can be retried.",
+            })
+
+        # Get original request parameters
+        req = old_job.get("request", {})
+
+        # Touch paper status for consistency checks (if workspace exists).
+        paper_dir = req.get("paper_dir", "")
+        if paper_dir:
+            ws = PaperWorkspace(paper_dir)
+            if ws.is_workspace():
+                ws.load_paper_status()
+                # For retry, we skip completed stages
+                # (skip_completed=True is default in _new_job)
+
+        # Create new job with same parameters
+        new_job = _new_job(
+            paper_dir=req.get("paper_dir", ""),
+            pdf_path=req.get("pdf_path", ""),
+            steps=req.get("steps", ALL_STEPS),
+            skip_completed=True,  # Always skip completed for retry
+            translate_concurrency=req.get("translate_concurrency", 4),
+            dry_run_rename=req.get("dry_run_rename", False),
+        )
+
+        # Start the new job
+        task = asyncio.create_task(_job_runner(new_job["job_id"]))
+        JOB_TASKS[new_job["job_id"]] = task
+
+        return json.dumps({
+            "status": "ok",
+            "original_job_id": job_id,
+            "original_state": old_state,
+            "new_job_id": new_job["job_id"],
+            "state": new_job["state"],
+            "message": f"Retry job created. Original job was in state '{old_state}'.",
         })

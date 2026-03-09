@@ -165,7 +165,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             paper_id: arXiv paper ID (e.g. '2310.12345' or '2310.12345v2').
-            download_dir: Directory to save the PDF. If "cwd"/"auto", uses <cwd>/papers.
+            download_dir: Directory to save the PDF. Prefer an absolute path to avoid
+                ambiguity across MCP clients. If "cwd"/"auto", uses <cwd>/papers.
                 If omitted, uses ARXIV_STORAGE_PATH (relative paths are resolved under cwd).
 
         Returns:
