@@ -8,6 +8,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .spec-workflow/
+.serena/
+.claude/
 
 # Local env
 .env
