@@ -10,7 +10,7 @@ __pycache__/
 .spec-workflow/
 .serena/
 .claude/
-
+skills/
 # Local env
 .env
 
