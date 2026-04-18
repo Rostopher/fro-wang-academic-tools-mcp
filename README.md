@@ -23,27 +23,27 @@ Having frequently encountered this bottleneck, I built `fro-wang-academic-tools-
 - Summary report generation (`generate_summary`)
 - Folder rename by metadata convention (`rename_paper_folder`)
 - arXiv search/download tools
-- Zotero library tools (search, notes, collections, attachments, annotations)
+- Zotero local read-only library tools (search, notes, collections, attachments, annotations)
 
 ## Tool Groups
 
-This server currently registers 22 MCP tools:
+This server currently registers 25 MCP tools:
 
 - Paper processing: `ocr_paper`, `extract_metadata`, `extract_sections`, `translate_paper`, `generate_summary`, `rename_paper_folder`
-- Pipeline: `process_paper`, `start_process_paper_job`, `get_process_paper_job`, `cancel_process_paper_job`
+- Pipeline: `process_paper`, `start_process_paper_job`, `get_process_paper_job`, `cancel_process_paper_job`, `batch_process_papers`, `get_batch_status`, `list_jobs`, `retry_job`
 - arXiv: `search_papers`, `download_paper`
-- Zotero: `zotero_search_items`, `zotero_get_item_metadata`, `zotero_get_item_fulltext`, `zotero_get_collections`, `zotero_get_collection_items`, `zotero_get_tags`, `zotero_get_recent`, `zotero_get_annotations`, `zotero_get_notes`, `zotero_create_note`
+- Zotero read-only: `zotero_search_items`, `zotero_get_item_metadata`, `zotero_get_item_fulltext`, `zotero_get_collections`, `zotero_get_collection_items`, `zotero_get_tags`, `zotero_get_recent`, `zotero_get_annotations`, `zotero_get_notes`
 
 ## Requirements
 
 - Python `>=3.11` (project pin: `3.13.7`, see `.python-version`)
 - MinerU token (for OCR)
 - OpenAI-compatible LLM API key (default endpoint is DeepSeek)
-- Zotero credentials (for remote mode) or local Zotero desktop mode
+- Zotero desktop app with local HTTP API enabled (read-only integration)
 
 > **Configuration Guides:**
 > - [How to configure DeepSeek API](docs/deepseek_config_guide.md)
-> - [How to configure Zotero (Local & Remote)](docs/zotero_config_guide.md)
+> - [How to configure Zotero local read-only access](docs/zotero_config_guide.md)
 > - [How to configure MinerU OCR](docs/mineru_config_guide.md)
 > - [How to configure MCP in AI Agents (Cursor, Claude, Copilot, Cline)](docs/mcp_client_config_guide.md)
 
@@ -71,7 +71,7 @@ Edit `.env` at least for:
 
 - `LLM_API_KEY`
 - `MINERU_API_KEY_1`
-- `ZOTERO_LIBRARY_ID` and `ZOTERO_API_KEY` (if using Zotero remote mode)
+- `ZOTERO_LOCAL=true` for local read-only Zotero access
 
 **Step 2**: Configure your MCP client to run the server from the local project path.
 
@@ -134,8 +134,7 @@ LLM_API_KEY = "your_llm_key"
 LLM_BASE_URL = "https://api.deepseek.com"
 LLM_MODEL = "deepseek-chat"
 MINERU_API_KEY_1 = "your_mineru_key"
-ZOTERO_LIBRARY_ID = "your_zotero_library_id"
-ZOTERO_API_KEY = "your_zotero_api_key"
+ZOTERO_LOCAL = "true"
 ```
 
 #### JSON-based MCP clients (Cursor, Claude Desktop, Cline, etc.)
@@ -151,8 +150,7 @@ ZOTERO_API_KEY = "your_zotero_api_key"
         "LLM_BASE_URL": "https://api.deepseek.com",
         "LLM_MODEL": "deepseek-chat",
         "MINERU_API_KEY_1": "your_mineru_key",
-        "ZOTERO_LIBRARY_ID": "your_zotero_library_id",
-        "ZOTERO_API_KEY": "your_zotero_key"
+        "ZOTERO_LOCAL": "true"
       }
     }
   }

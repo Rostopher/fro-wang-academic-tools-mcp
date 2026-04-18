@@ -44,7 +44,7 @@ PDF  →[ocr_paper]→  full.md
 
 或者：一次调用 `process_paper` 完成所有步骤，支持断点续跑。
 
-配套能力：**arXiv 搜索/下载**、**Zotero 文库管理**（10 个工具）。
+配套能力：**arXiv 搜索/下载**、**本地 Zotero 只读访问**（9 个工具）。
 
 ### 三条最关键不变量
 
@@ -65,7 +65,7 @@ PDF  →[ocr_paper]→  full.md
 | Python ≥ 3.11 | 项目 `requires-python = ">=3.11"` |
 | MinerU 账号 | OCR 需要 [mineru.net](https://mineru.net) API Token |
 | DeepSeek API Key | 或其他 OpenAI-compatible endpoint |
-| Zotero（可选） | 远程模式需 Library ID + API Key；本地模式设 `ZOTERO_LOCAL=true` |
+| Zotero（可选） | 本地只读模式设 `ZOTERO_LOCAL=true`，Zotero Desktop 需运行并启用本地 HTTP/API |
 
 ### 2.2 安装
 
@@ -85,8 +85,7 @@ cd mcps/fro-wang-academic-tools-mcp
 cp .env.example .env
 # 编辑 .env，至少填写：
 #   LLM_API_KEY=sk-...
-#   ZOTERO_LIBRARY_ID=...
-#   ZOTERO_API_KEY=...
+#   ZOTERO_LOCAL=true
 #   MINERU_TOKENS_FILE=~/.fro-wang-academic-tools-mcp/mineru_tokens.txt
 ```
 
@@ -97,10 +96,7 @@ cp .env.example .env
 | `LLM_API_KEY` | — | LLM API Key |
 | `LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI-compatible endpoint |
 | `LLM_MODEL` | `deepseek-chat` | 使用的模型名 |
-| `ZOTERO_LIBRARY_ID` | — | Zotero 用户/群组 ID |
-| `ZOTERO_LIBRARY_TYPE` | `user` | `user` 或 `group` |
-| `ZOTERO_API_KEY` | — | Zotero Web API Key |
-| `ZOTERO_LOCAL` | `false` | 本地模式（Zotero 桌面端必须运行） |
+| `ZOTERO_LOCAL` | `false` | 本地只读模式（Zotero 桌面端必须运行） |
 | `ARXIV_STORAGE_PATH` | `papers` | arXiv 下载目录（建议使用绝对路径；相对路径按当前工作目录解析） |
 | `MINERU_API_BASE` | `https://mineru.net/api/v4` | MinerU API 基地址 |
 | `MINERU_TOKENS_FILE` | — | 一行一个 token 的文本文件路径 |
@@ -142,7 +138,7 @@ python -m academic_tools
 | `MINERU_TOKENS_FILE not set` | `.env` 未配置 | 设 `MINERU_TOKENS_FILE` 指向实际文件 |
 | OCR 超时 | MinerU 免费额度轮询慢 | 增加重试间隔，默认轮询在 `tools/ocr.py#_poll_result` |
 | LLM 返回非 JSON | DeepSeek/模型变格式 | `shared/prompt_utils.py#extract_json_from_response` 有 5 层兜底，仍失败则检查 prompt |
-| Zotero `Missing credentials` | 未配置远程/本地 | 远程需 `ZOTERO_LIBRARY_ID + ZOTERO_API_KEY`；本地设 `ZOTERO_LOCAL=true` |
+| Zotero 本地只读工具不可用 | Zotero 未运行或未启用本地 HTTP/API | 设 `ZOTERO_LOCAL=true`，打开 Zotero Desktop 并启用本地访问 |
 
 ---
 
@@ -267,7 +263,7 @@ flowchart TD
 | `search_papers` | `tools/arxiv.py` | `query`, `max_results`, `date_from`, `date_to`, `categories`, `sort_by` |
 | `download_paper` | `tools/arxiv.py` | `paper_id`, `download_dir` |
 
-#### Zotero 工具（10 个）
+#### Zotero 只读工具（9 个）
 
 | 工具名 | 触发文件 | 说明 |
 |--------|----------|------|
@@ -280,7 +276,6 @@ flowchart TD
 | `zotero_get_recent` | `tools/zotero.py` | 最近添加条目 |
 | `zotero_get_annotations` | `tools/zotero.py` | PDF 批注（Better BibTeX） |
 | `zotero_get_notes` | `tools/zotero.py` | 条目笔记 |
-| `zotero_create_note` | `tools/zotero.py` | 创建笔记 |
 
 ---
 
@@ -868,11 +863,11 @@ erDiagram
 3. 检查 `_build_folder_name()` 中各 `sanitize_for_filename()` 是否把有效字符去掉了
    - `(code: tools/rename.py#_build_folder_name)`
 
-#### 故障 6：Zotero 工具报 `Missing credentials`
+#### 故障 6：Zotero 本地只读工具无法读取
 
 **定位路径：**
-1. 检查 `.env` 中是否设置 `ZOTERO_LIBRARY_ID + ZOTERO_API_KEY`
-2. 本地模式：设 `ZOTERO_LOCAL=true`，确保 Zotero 桌面应用正在运行
+1. 检查 `.env` 中是否设置 `ZOTERO_LOCAL=true`
+2. 确保 Zotero 桌面应用正在运行，并启用本地 HTTP/API 访问
 3. `(code: zotero/client.py#get_zotero_client)`
 
 #### 故障 7：结构提取返回非 list
@@ -948,7 +943,7 @@ erDiagram
 | Crossref (`api.crossref.org`) | 元数据富化 | 无（建议加 User-Agent） |
 | OpenAlex (`api.openalex.org`) | 元数据富化 | 无（polite pool 需加 mailto） |
 | arXiv Atom API | 搜索 | 无 |
-| Zotero Web API | 文献库管理 | API Key（`ZOTERO_API_KEY`） |
+| Zotero Desktop local API | 本地文库只读访问 | `ZOTERO_LOCAL=true` |
 
 ### TODO（已知待改进点）
 

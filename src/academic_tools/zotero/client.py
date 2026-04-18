@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
+from urllib.parse import unquote, urlparse
 
 from pyzotero import zotero
 
@@ -24,6 +24,7 @@ class AttachmentDetails:
     title: str
     filename: str
     content_type: str
+    href: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -37,25 +38,20 @@ def get_zotero_client() -> zotero.Zotero:
     Raises:
         ValueError: If required env vars are missing for remote mode.
     """
-    library_id = settings.ZOTERO_LIBRARY_ID
-    library_type = settings.ZOTERO_LIBRARY_TYPE
-    api_key = settings.ZOTERO_API_KEY
     local = settings.ZOTERO_LOCAL
 
-    if local and not library_id:
-        library_id = "0"  # local Zotero default
-
-    if not local and not (library_id and api_key):
+    if not local:
         raise ValueError(
-            "Missing Zotero credentials. Set ZOTERO_LIBRARY_ID + ZOTERO_API_KEY, "
-            "or set ZOTERO_LOCAL=true for local mode."
+            "Zotero integration is local read-only. Set ZOTERO_LOCAL=true, open "
+            "Zotero Desktop, and enable the local HTTP/API server. Remote Zotero "
+            "API access and write operations are not supported by this MCP."
         )
 
     return zotero.Zotero(
-        library_id=library_id,
-        library_type=library_type,
-        api_key=api_key,
-        local=local,
+        library_id="0",
+        library_type="user",
+        api_key=None,
+        local=True,
     )
 
 
@@ -210,11 +206,13 @@ def get_attachment_details(
     item_key = data.get("key")
 
     if item_type == "attachment":
+        enclosure = item.get("links", {}).get("enclosure", {})
         return AttachmentDetails(
             key=item_key,
             title=data.get("title", "Untitled"),
             filename=data.get("filename", ""),
             content_type=data.get("contentType", ""),
+            href=enclosure.get("href"),
         )
 
     try:
@@ -225,7 +223,14 @@ def get_attachment_details(
             if cd.get("itemType") != "attachment":
                 continue
             ct = cd.get("contentType", "")
-            entry = (child.get("key", ""), cd.get("title", "Untitled"), cd.get("filename", ""), ct)
+            enclosure = child.get("links", {}).get("enclosure", {})
+            entry = (
+                child.get("key", ""),
+                cd.get("title", "Untitled"),
+                cd.get("filename", ""),
+                ct,
+                enclosure.get("href"),
+            )
             if ct == "application/pdf":
                 pdfs.append(entry)
             elif ct.startswith("text/html"):
@@ -235,8 +240,14 @@ def get_attachment_details(
 
         for category in (pdfs, htmls, others):
             if category:
-                key, title, filename, content_type = category[0]
-                return AttachmentDetails(key=key, title=title, filename=filename, content_type=content_type)
+                key, title, filename, content_type, href = category[0]
+                return AttachmentDetails(
+                    key=key,
+                    title=title,
+                    filename=filename,
+                    content_type=content_type,
+                    href=href,
+                )
     except Exception:
         pass
 
@@ -247,7 +258,11 @@ def convert_to_markdown(file_path: Union[str, Path]) -> str:
     """Convert a local file (PDF, HTML, …) to Markdown via markitdown."""
     try:
         from markitdown import MarkItDown
-        result = MarkItDown().convert(str(file_path))
+        value = str(file_path)
+        parsed = urlparse(value)
+        if parsed.scheme == "file":
+            value = unquote(parsed.path)
+        result = MarkItDown().convert(value)
         return result.text_content
     except Exception as exc:
         return f"Error converting file to Markdown: {exc}"

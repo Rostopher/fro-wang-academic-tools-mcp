@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Optional
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,9 +25,6 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "deepseek-chat"
 
     # ── Zotero ────────────────────────────────────────────────
-    ZOTERO_LIBRARY_ID: Optional[str] = None
-    ZOTERO_LIBRARY_TYPE: str = "user"
-    ZOTERO_API_KEY: Optional[str] = None
     ZOTERO_LOCAL: bool = False
 
     # ── arXiv ─────────────────────────────────────────────────

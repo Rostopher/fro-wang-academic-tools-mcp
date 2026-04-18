@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,6 +26,7 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 _ARXIV_API_URL = "https://export.arxiv.org/api/query"
+_PDF_MIN_BYTES = 5
 _NS = {
     "atom": "http://www.w3.org/2005/Atom",
     "arxiv": "http://arxiv.org/schemas/atom",
@@ -112,6 +115,68 @@ async def _raw_search(
     return [_parse_arxiv_entry(e) for e in root.findall("atom:entry", _NS)]
 
 
+def _is_valid_pdf(path: Path) -> bool:
+    """Return True when a downloaded file looks like a non-empty PDF."""
+    if not path.exists() or not path.is_file():
+        return False
+    if path.stat().st_size < _PDF_MIN_BYTES:
+        return False
+    with path.open("rb") as fh:
+        return fh.read(5) == b"%PDF-"
+
+
+def _download_pdf_with_retries(
+    pdf_url: str,
+    pdf_path: Path,
+    *,
+    retries: int = 3,
+    timeout: float = 60.0,
+) -> None:
+    """Download a PDF to a temporary .part file, then atomically replace final path."""
+    part_path = pdf_path.with_name(f".{pdf_path.name}.part")
+    last_error: Exception | None = None
+
+    for attempt in range(1, retries + 1):
+        if part_path.exists():
+            part_path.unlink()
+
+        try:
+            received = 0
+            with httpx.stream(
+                "GET",
+                pdf_url,
+                follow_redirects=True,
+                timeout=timeout,
+                headers={"User-Agent": "fro-wang-academic-tools-mcp/0.1"},
+            ) as resp:
+                resp.raise_for_status()
+                expected_length = resp.headers.get("Content-Length")
+                with part_path.open("wb") as fh:
+                    for chunk in resp.iter_bytes():
+                        if not chunk:
+                            continue
+                        received += len(chunk)
+                        fh.write(chunk)
+
+            if expected_length is not None and received != int(expected_length):
+                raise RuntimeError(
+                    f"Incomplete download: received {received} bytes, expected {expected_length}"
+                )
+            if not _is_valid_pdf(part_path):
+                raise RuntimeError("Downloaded file is empty or not a valid PDF")
+
+            part_path.replace(pdf_path)
+            return
+        except Exception as exc:
+            last_error = exc
+            if part_path.exists():
+                part_path.unlink()
+            if attempt < retries:
+                time.sleep(min(2 ** (attempt - 1), 5))
+
+    raise RuntimeError(f"Failed to download PDF after {retries} attempts: {last_error}")
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -182,16 +247,19 @@ def register(mcp: FastMCP) -> None:
         pdf_path = storage / f"{paper_id}.pdf"
 
         if pdf_path.exists():
-            return json.dumps({
-                "status": "already_exists",
-                "path": str(pdf_path),
-                "paper_id": paper_id,
-            })
+            if _is_valid_pdf(pdf_path):
+                return json.dumps({
+                    "status": "already_exists",
+                    "path": str(pdf_path),
+                    "paper_id": paper_id,
+                })
+            pdf_path.unlink()
 
         try:
             search = arxiv.Search(id_list=[paper_id])
             paper = next(arxiv.Client().results(search))
-            paper.download_pdf(dirpath=str(storage), filename=f"{paper_id}.pdf")
+            pdf_url = getattr(paper, "pdf_url", None) or f"https://arxiv.org/pdf/{paper_id}"
+            await asyncio.to_thread(_download_pdf_with_retries, pdf_url, pdf_path)
             return json.dumps({
                 "status": "success",
                 "path": str(pdf_path),
@@ -199,4 +267,9 @@ def register(mcp: FastMCP) -> None:
                 "paper_id": paper_id,
             })
         except Exception as exc:
+            part_path = pdf_path.with_name(f".{pdf_path.name}.part")
+            if part_path.exists():
+                part_path.unlink()
+            if pdf_path.exists():
+                pdf_path.unlink()
             return json.dumps({"status": "error", "error": str(exc), "paper_id": paper_id})

@@ -47,6 +47,9 @@ packages = ["src/academic_tools"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: tests that touch external services or local desktop applications",
+]
 
 [dependency-groups]
 dev = [

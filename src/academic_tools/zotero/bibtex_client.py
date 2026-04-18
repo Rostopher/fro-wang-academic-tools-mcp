@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import requests
 
@@ -36,19 +35,65 @@ class ZoteroBetterBibTexAPI:
                 raise RuntimeError(f"BBT API error: {err.get('message', err)}")
             return data.get("result", {})
         except requests.exceptions.RequestException as exc:
-            raise RuntimeError(f"Connection error (is Zotero+BBT running?): {exc}")
+            diagnosis = self.diagnose_connection()
+            raise RuntimeError(
+                f"Connection error: Zotero desktop app is not running or local API access "
+                f"is disabled. Open Zotero desktop first, install Better BibTeX, and "
+                f"Enable HTTP server/local API access in Zotero or Better BibTeX settings. "
+                f"Checked 127.0.0.1:{self.port}. Diagnosis: {diagnosis['message']} "
+                f"Original error: {exc}"
+            )
+
+    def diagnose_connection(self) -> Dict[str, str]:
+        """Diagnose local Zotero + Better BibTeX HTTP availability."""
+        probe_url = f"http://127.0.0.1:{self.port}/better-bibtex/cayw?probe=true"
+        try:
+            resp = requests.get(probe_url, headers=self.headers, timeout=5)
+        except requests.exceptions.RequestException as exc:
+            return {
+                "status": "error",
+                "reason": "unreachable",
+                "message": (
+                    f"Open Zotero desktop first, install Better BibTeX, and Enable HTTP "
+                    f"server/local API access in Zotero or Better BibTeX settings. "
+                    f"Checked 127.0.0.1:{self.port}. Zotero desktop app is not running "
+                    f"or local API access is disabled. Details: {exc}"
+                ),
+            }
+
+        text = resp.text.strip()
+        if text == "ready":
+            return {
+                "status": "success",
+                "reason": "ready",
+                "message": f"Zotero + Better BibTeX are ready on 127.0.0.1:{self.port}.",
+            }
+
+        if "No endpoint found" in text:
+            return {
+                "status": "error",
+                "reason": "better_bibtex_unavailable",
+                "message": (
+                    f"Zotero local API responded on 127.0.0.1:{self.port}, but the "
+                    f"Better BibTeX endpoint was not found. Install Better BibTeX and "
+                    f"enable its local HTTP/API integration if you need BBT-only "
+                    f"features. Response preview: {text[:120]!r}"
+                ),
+            }
+
+        return {
+            "status": "error",
+            "reason": "port_occupied",
+            "message": (
+                f"127.0.0.1:{self.port} responded, but not like Zotero + Better BibTeX. "
+                f"another process may be using the port, or Better BibTeX local HTTP "
+                f"access is not enabled. Response preview: {text[:120]!r}"
+            ),
+        }
 
     def is_zotero_running(self) -> bool:
         """Return True if Zotero + Better BibTeX are accessible."""
-        try:
-            resp = requests.get(
-                f"http://127.0.0.1:{self.port}/better-bibtex/cayw?probe=true",
-                headers=self.headers,
-                timeout=5,
-            )
-            return resp.text.strip() == "ready"
-        except Exception:
-            return False
+        return self.diagnose_connection()["status"] == "success"
 
     def export_bibtex(self, item_key: str, library_id: int = 1) -> str:
         """Export BibTeX for a Zotero item key via BBT."""
