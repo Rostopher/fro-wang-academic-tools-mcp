@@ -114,3 +114,12 @@
 - Release 事件能把 PyPI 发布绑定到明确的 tag/release 审批动作
 - 构建和发布拆成两个 job，发布 job 只下载构建产物并持有 `id-token: write`
 **影响范围**：`.github/workflows/publish.yml`、GitHub environment `pypi`、PyPI 项目 Publishing 设置
+
+### DEC-011: 批量积累 PyPI 发布而非每个小改动都发版 (2026-04-18)
+**背景**：PyPI 版本和 distribution 文件名不可复用，频繁为小改动发版会造成版本噪音，也增加发布失败和维护成本。
+**结论**：日常改动先合并到 `main`，只有用户可见行为、安装/打包修复、依赖/兼容性变化，或多个小修复已经形成清晰 release notes 时才发布 PyPI。
+**理由**：
+- 每个 PyPI 版本号都是不可复用的公开发布记录
+- 批量发布能让 release notes 更有信息量，降低用户升级频率
+- 小型内部改动仍可通过 git history 和文档追踪，不需要马上进入包分发渠道
+**影响范围**：发布节奏、`docs/RUNBOOK.md` 的 PyPI 发布检查流程、GitHub Release 创建时机

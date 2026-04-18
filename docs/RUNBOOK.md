@@ -1,7 +1,7 @@
 # Runbook
 
 > **职责**：说明"怎么运行、产物在哪、出错如何排查"。是执行类信息的唯一入口。
-> **最后更新**：2026-04-18（PyPI Trusted Publishing 发布流程）
+> **最后更新**：2026-04-18（PyPI 发布节奏与流程）
 
 ---
 
@@ -70,14 +70,36 @@ uv run pytest tests/integration/test_zotero_live_tools.py::test_live_zotero_item
 - 本项目不暴露 Zotero 写入工具；Zotero Desktop 本地 HTTP API 在当前项目中按只读能力使用
 - Better BibTeX 相关能力需额外确认；若诊断返回 `better_bibtex_unavailable`，表示 Zotero local API 在运行，但 Better BibTeX endpoint 不存在或未启用
 
-## 2.2) PyPI 发布流程
+## 2.2) PyPI 发布节奏
+
+日常代码、测试和文档改动可以先合并到 `main`，不必每次都发布 PyPI。优先攒成一个可说明的 release 批次，避免无意义版本噪音。
+
+适合发布 PyPI 的情况：
+
+- 新增或改变用户可见 MCP 工具行为
+- 修复影响安装、运行、打包或外部服务调用的问题
+- 更新依赖、Python 兼容性、配置项或命令入口
+- 累计多个小修复后，已经能写出清晰 release notes
+
+不必立即发布的情况：
+
+- 纯文档、注释、内部整理或测试补充
+- 不影响已安装用户的局部重构
+- 刚合并但还需要继续观察的一小步实验性改动
+
+发布前先确认这次变更值得占用一个新的 PyPI 版本号。PyPI 文件名不可复用；一旦某个版本发布，即使删除文件也不能用相同版本重新上传。
+
+## 2.3) PyPI 发布流程
 
 发布由 GitHub Release 触发：
 
-1. 确认 `pyproject.toml` 版本号尚未发布到 PyPI。
-2. 将发布改动合并到 `main`。
-3. 在 GitHub 仓库创建并发布 tag/release，例如 `v0.1.4`。
-4. GitHub Actions 会运行 `.github/workflows/publish.yml`，先构建 sdist/wheel，再通过 PyPI Trusted Publishing 上传。
+1. 汇总自上次 release 以来的变更，确认需要发布。
+2. 将 `pyproject.toml` 版本号改成尚未发布到 PyPI 的新版本。
+3. 本地运行基础验证，例如 `python -m build`，必要时再跑相关 pytest。
+4. 将发布改动合并到 `main` 并推送远端。
+5. 在 GitHub 仓库创建并发布匹配版本的 tag/release，例如 `v0.1.5`。
+6. GitHub Actions 会运行 `.github/workflows/publish.yml`，先构建 sdist/wheel，再通过 PyPI Trusted Publishing 上传。
+7. 发布后检查 GitHub Actions run、PyPI 项目页和 `Download files` 中的 wheel/sdist。
 
 PyPI 项目的 Trusted Publisher 配置需与 workflow 精确匹配：
 
@@ -87,6 +109,8 @@ PyPI 项目的 Trusted Publisher 配置需与 workflow 精确匹配：
 - Environment name: `pypi`
 
 发布 job 依赖 GitHub environment `pypi` 和 OIDC 权限 `id-token: write`；不要在仓库 secrets 中配置长期 `PYPI_TOKEN`。
+
+若发布 workflow 报 `File already exists`，说明该版本的某个 distribution 已经上传到 PyPI。不要重跑同一个版本；改用下一个版本号重新发布。
 
 ## 3) 输出位置
 
