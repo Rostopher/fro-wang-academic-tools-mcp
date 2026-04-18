@@ -105,3 +105,12 @@
 - 在 `queued` 等待而非拒绝，保留了批量提交后自动排队执行的能力
 - `MAX_CONCURRENT_JOBS` 通过 `config.py` 配置，默认 3，可按环境调整
 **影响范围**：`tools/pipeline.py` `_job_runner()`、`config.py` 新增 `MAX_CONCURRENT_JOBS: int = 3`
+
+### DEC-010: 使用 GitHub Release + PyPI Trusted Publishing 发布包 (2026-04-18)
+**背景**：项目已在 PyPI 发布，后续需要从手动 `twine` 上传切换到可审计的 GitHub 自动发布流程。
+**结论**：新增 `.github/workflows/publish.yml`，由 GitHub Release published 事件触发构建，并通过 PyPI OIDC Trusted Publisher 发布到 `fro-wang-academic-tools-mcp` 项目。
+**理由**：
+- Trusted Publishing 使用短时 OIDC 凭证，不需要在 GitHub secrets 保存长期 PyPI token
+- Release 事件能把 PyPI 发布绑定到明确的 tag/release 审批动作
+- 构建和发布拆成两个 job，发布 job 只下载构建产物并持有 `id-token: write`
+**影响范围**：`.github/workflows/publish.yml`、GitHub environment `pypi`、PyPI 项目 Publishing 设置

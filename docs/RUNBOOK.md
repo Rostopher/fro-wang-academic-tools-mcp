@@ -1,7 +1,7 @@
 # Runbook
 
 > **职责**：说明"怎么运行、产物在哪、出错如何排查"。是执行类信息的唯一入口。
-> **最后更新**：2026-04-18（测试复现入口更新）
+> **最后更新**：2026-04-18（PyPI Trusted Publishing 发布流程）
 
 ---
 
@@ -69,6 +69,24 @@ uv run pytest tests/integration/test_zotero_live_tools.py::test_live_zotero_item
 - 只读工具链已验证通过：recent、collections、tags、search、item metadata、fulltext、annotations、notes、collection items
 - 本项目不暴露 Zotero 写入工具；Zotero Desktop 本地 HTTP API 在当前项目中按只读能力使用
 - Better BibTeX 相关能力需额外确认；若诊断返回 `better_bibtex_unavailable`，表示 Zotero local API 在运行，但 Better BibTeX endpoint 不存在或未启用
+
+## 2.2) PyPI 发布流程
+
+发布由 GitHub Release 触发：
+
+1. 确认 `pyproject.toml` 版本号尚未发布到 PyPI。
+2. 将发布改动合并到 `main`。
+3. 在 GitHub 仓库创建并发布 tag/release，例如 `v0.1.4`。
+4. GitHub Actions 会运行 `.github/workflows/publish.yml`，先构建 sdist/wheel，再通过 PyPI Trusted Publishing 上传。
+
+PyPI 项目的 Trusted Publisher 配置需与 workflow 精确匹配：
+
+- Owner: `Rostopher`
+- Repository name: `fro-wang-academic-tools-mcp`
+- Workflow name: `publish.yml`
+- Environment name: `pypi`
+
+发布 job 依赖 GitHub environment `pypi` 和 OIDC 权限 `id-token: write`；不要在仓库 secrets 中配置长期 `PYPI_TOKEN`。
 
 ## 3) 输出位置
 

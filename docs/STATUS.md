@@ -1,14 +1,14 @@
 # Project Status
 
 > **职责**：记录"项目当前进展到哪了"，包括已完成模块、进行中事项和待办优先级。是状态类信息的唯一入口。
-> **最后更新**：2026-04-18（测试复现入口更新）
+> **最后更新**：2026-04-18（PyPI Trusted Publishing 发布流程）
 
 ---
 
 ## 1) 项目范围（Scope）
 
 - **目标**：提供统一的学术论文处理 MCP Server，支持 OCR、元数据提取、结构分析、翻译、摘要、重命名，以及 arXiv 搜索和 Zotero 集成
-- **当前版本**：v0.1.3
+- **当前版本**：v0.1.4
 - **主线仓库/目录**：`src/academic_tools/`
 
 ## 2) 已完成（Done）
@@ -37,6 +37,7 @@
 - [x] **本地 Zotero 诊断**：Better BibTeX 客户端新增本地连接诊断，区分未连接、端口异常响应，并在错误信息中提示打开 Zotero、安装 Better BibTeX、启用本地 HTTP/API 服务
 - [x] **Zotero live 测试入口**：新增默认跳过的 `tests/integration/test_zotero_live_tools.py`；`ZOTERO_LIVE_TEST=1` 可跑真实只读测试
 - [x] **Zotero live 只读验证**：本机真实 Zotero 下 recent/collections/tags/search/item metadata/fulltext/annotations/notes/collection items 只读路径通过
+- [x] **PyPI Trusted Publishing 发布流程**：新增 GitHub Release 触发的 `.github/workflows/publish.yml`，构建 sdist/wheel 后通过 PyPI OIDC Trusted Publisher 发布，不再依赖长期 `PYPI_TOKEN`
 
 ## 3) 进行中（In Progress）
 
